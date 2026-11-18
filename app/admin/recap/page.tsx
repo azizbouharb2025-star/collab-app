@@ -339,8 +339,8 @@ export default function AdminRecapPage() {
       'État de départ': u.batch?.from_state?.name || '',
       'État cible': u.to_state?.name || '',
       Quantité: u.quantity,
-      'Prix unitaire': Number(u.price_per_piece).toFixed(2) + ' €',
-      'Montant total': Number(u.amount).toFixed(2) + ' €',
+      'Prix unitaire': Number(u.price_per_piece).toFixed(2) + ' TND',
+      'Montant total': Number(u.amount).toFixed(2) + ' TND',
       'Durée (secondes)': u.duration_seconds || '',
     }))
   }, [filteredUpdates])
@@ -579,7 +579,7 @@ export default function AdminRecapPage() {
                 Répartition des montants par modèle
               </CardTitle>
               <CardDescription>
-                Part de chaque modèle dans le coût global (€)
+                Part de chaque modèle dans le coût global (TND)
               </CardDescription>
             </CardHeader>
             <CardContent className="h-72">

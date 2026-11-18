@@ -514,7 +514,7 @@ export default function AdminConfigPricesPage() {
 
               {/* Prix */}
               <div className="space-y-2">
-                <Label htmlFor="price_input">Prix par pièce (€) *</Label>
+                <Label htmlFor="price_input">Prix par pièce (TND) *</Label>
                 <Input
                   id="price_input"
                   type="number"

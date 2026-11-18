@@ -398,7 +398,7 @@ export default function SubcontractorEarningsPage() {
                   />
                   <YAxis
                     tick={{ fontSize: 10 }}
-                    tickFormatter={(val) => `${val}€`}
+                    tickFormatter={(val) => `${val}TND`}
                     tickLine={false}
                     axisLine={false}
                   />
@@ -527,7 +527,7 @@ export default function SubcontractorEarningsPage() {
                   <TableRow className="hover:bg-transparent">
                     <TableHead className="text-xs font-bold">Transition</TableHead>
                     <TableHead className="text-xs font-bold text-right">Nb pièces</TableHead>
-                    <TableHead className="text-xs font-bold text-right">Total €</TableHead>
+                    <TableHead className="text-xs font-bold text-right">Total TND</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

@@ -167,7 +167,7 @@ Après déploiement, connectez-vous avec votre compte admin et effectuez ces vé
 
 1. **Config → Modèles** : vérifiez ou modifiez les modèles de démo (SILEX, HOUDA, CRYSTAL). Ajoutez vos propres modèles de pièces.
 2. **Config → États** : vérifiez les états disponibles (2ème choix → Choix commercial / 1er choix / Rebut). Modifiez les couleurs et l'ordre si besoin.
-3. **Config → Grille de prix** : vérifiez et ajustez les prix par transition d'état (ex: 2ème choix → 1er choix = X €/pièce)
+3. **Config → Grille de prix** : vérifiez et ajustez les prix par transition d'état (ex: 2ème choix → 1er choix = X TND/pièce)
 4. **Config → Sous-traitants** : créez les vrais comptes de vos sous-traitants
 5. **Lots → Créer un lot** : créez votre premier lot, assignez-le à un sous-traitant et envoyez-le
 
