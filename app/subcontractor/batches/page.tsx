@@ -82,7 +82,7 @@ export default async function SubcontractorBatchesPage({ searchParams }: PagePro
   // Requête des lots assignés au sous-traitant
   let query = supabase
     .from('batches')
-    .select('*')
+    .select('*, batch_models(id, quantity, model:models(*))')
     .eq('subcontractor_id', user.id)
 
   if (searchParams.model) {
@@ -113,8 +113,21 @@ export default async function SubcontractorBatchesPage({ searchParams }: PagePro
     created_at: new Date().toISOString(),
   }
 
-  const batches: BatchWithRelations[] = (rawBatches || []).map((b) => {
-    const model = models.find((m) => m.id === b.model_id) || defaultModel
+  const batches: (BatchWithRelations & {
+    batch_models?: Array<{ id: string; quantity: number; model: AppModel }>
+  })[] = (rawBatches || []).map((b) => {
+    const rawBModels = (b as unknown as { batch_models?: Array<{ id: string; quantity: number; model: AppModel }> }).batch_models || []
+    const model =
+      rawBModels.length > 0
+        ? {
+            id: b.model_id || '',
+            name: rawBModels.map((bm) => bm.model?.name).filter(Boolean).join(' + '),
+            description: null,
+            active: true,
+            created_at: b.created_at,
+          }
+        : models.find((m) => m.id === b.model_id) || defaultModel
+
     const from_state = states.find((s) => s.id === b.from_state_id) || defaultState
     const expected_state = states.find((s) => s.id === b.expected_state_id) || defaultState
     const subcontractor = profile || {
@@ -122,12 +135,14 @@ export default async function SubcontractorBatchesPage({ searchParams }: PagePro
       email: user.email || '',
       full_name: '',
       role: 'subcontractor' as const,
+      active: true,
       created_at: new Date().toISOString(),
     }
 
     return {
       ...b,
       model,
+      batch_models: rawBModels,
       from_state,
       expected_state,
       subcontractor,

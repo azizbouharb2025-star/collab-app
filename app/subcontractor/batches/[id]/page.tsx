@@ -39,6 +39,13 @@ import { BatchStatusBadge } from '@/components/shared/batch-status-badge'
 import { Stopwatch } from '@/components/shared/stopwatch'
 import { QuantitySelector } from '@/components/shared/quantity-selector'
 import { ErrorMessage } from '@/components/shared/error-message'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 
@@ -51,6 +58,14 @@ function formatEUR(amount: number): string {
 
 type BatchUpdateWithState = BatchUpdate & {
   to_state: State
+  model?: AppModel | null
+}
+
+interface BatchModelItem {
+  id: string
+  model_id: string
+  quantity: number
+  model?: AppModel
 }
 
 export default function SubcontractorBatchDetailPage() {
@@ -60,6 +75,8 @@ export default function SubcontractorBatchDetailPage() {
   const batchId = params.id as string
 
   const [batch, setBatch] = React.useState<BatchWithRelations | null>(null)
+  const [batchModels, setBatchModels] = React.useState<BatchModelItem[]>([])
+  const [selectedModelId, setSelectedModelId] = React.useState<string>('')
   const [states, setStates] = React.useState<State[]>([])
   const [updates, setUpdates] = React.useState<BatchUpdateWithState[]>([])
   const [loading, setLoading] = React.useState(true)
@@ -98,12 +115,24 @@ export default function SubcontractorBatchDetailPage() {
       if (batchErr) throw batchErr
       if (!batchData) throw new Error('Lot introuvable.')
 
-      // 3. Charger le modèle
-      const { data: modelData } = await supabase
-        .from('models')
-        .select('*')
-        .eq('id', batchData.model_id)
-        .single<AppModel>()
+      // 3. Charger le modèle par défaut ou les modèles associés
+      const [{ data: modelData }, { data: bModelsData }, { data: allModelsData }] = await Promise.all([
+        batchData.model_id
+          ? supabase.from('models').select('*').eq('id', batchData.model_id).single<AppModel>()
+          : Promise.resolve({ data: null }),
+        supabase.from('batch_models').select('*, model:models(*)').eq('batch_id', batchId),
+        supabase.from('models').select('*'),
+      ])
+
+      const bModels = (bModelsData || []) as BatchModelItem[]
+      setBatchModels(bModels)
+
+      // Déterminer le modèle sélectionné par défaut pour la saisie
+      if (bModels.length > 0) {
+        setSelectedModelId((prev) => (prev && bModels.some((bm) => bm.model_id === prev) ? prev : bModels[0].model_id))
+      } else if (batchData.model_id) {
+        setSelectedModelId(batchData.model_id)
+      }
 
       // 4. Charger le profil du sous-traitant
       const { data: profileData } = await supabase
@@ -122,8 +151,8 @@ export default function SubcontractorBatchDetailPage() {
       }
 
       const defaultModel: AppModel = {
-        id: batchData.model_id,
-        name: 'Modèle',
+        id: batchData.model_id || '',
+        name: bModels.length > 0 ? bModels.map((bm) => bm.model?.name).filter(Boolean).join(' + ') : 'Modèle',
         description: null,
         active: true,
         created_at: new Date().toISOString(),
@@ -143,41 +172,32 @@ export default function SubcontractorBatchDetailPage() {
           email: '',
           full_name: 'Sous-traitant',
           role: 'subcontractor',
+          active: true,
           created_at: new Date().toISOString(),
         },
       }
 
       setBatch(fullBatch)
 
-      // 5. Charger l'historique des mises à jour du lot
+      // 5. Charger l'historique des mises à jour du lot avec modèle
       const { data: rawUpdates, error: updatesErr } = await supabase
         .from('batch_updates')
-        .select('*')
+        .select('*, to_state:states(*), model:models(*)')
         .eq('batch_id', batchId)
         .order('created_at', { ascending: false })
 
       if (updatesErr) throw updatesErr
 
-      const mappedUpdates: BatchUpdateWithState[] = (rawUpdates || []).map((u: BatchUpdate) => ({
+      const mappedUpdates: BatchUpdateWithState[] = (rawUpdates || []).map((u) => ({
         ...u,
-        to_state: allStates.find((s) => s.id === u.to_state_id) || defaultState,
+        to_state: u.to_state || defaultState,
+        model: u.model || null,
       }))
 
       setUpdates(mappedUpdates)
-
-      // Initialiser le dictionnaire de saisie pour chaque état disponible
-      setAllocations((prev) => {
-        const initial: Record<string, number> = {}
-        allStates.forEach((s) => {
-          initial[s.id] = prev[s.id] || 0
-        })
-        return initial
-      })
     } catch (err: unknown) {
       console.error('Erreur chargement lot:', err)
-      const message =
-        err instanceof Error ? err.message : 'Impossible de charger les données du lot.'
-      setError(message)
+      setError(err instanceof Error ? err.message : 'Impossible de charger les données du lot.')
     } finally {
       setLoading(false)
     }
@@ -187,11 +207,25 @@ export default function SubcontractorBatchDetailPage() {
     loadBatchData()
   }, [loadBatchData])
 
+  // Initialiser les allocations quand les états sont chargés
+  React.useEffect(() => {
+    if (states.length > 0) {
+      setAllocations((prev) => {
+        const initial: Record<string, number> = { ...prev }
+        states.forEach((s) => {
+          if (initial[s.id] === undefined) {
+            initial[s.id] = 0
+          }
+        })
+        return initial
+      })
+    }
+  }, [states])
+
   // Calculs métriques du lot
   const supersededIds = React.useMemo(() => {
     const ids = new Set<string>()
     updates.forEach((u) => {
-      // Si une correction référence un update précédent
       if ((u as unknown as { original_update_id?: string }).original_update_id) {
         ids.add((u as unknown as { original_update_id: string }).original_update_id)
       }
@@ -233,7 +267,6 @@ export default function SubcontractorBatchDetailPage() {
     if (!batch) return
     setOpening(true)
     try {
-      // Appel RPC record_batch_update avec p_updates = [] pour ouvrir le lot
       const { error: rpcError } = await supabase.rpc('record_batch_update', {
         p_batch_id: batch.id,
         p_updates: [],
@@ -241,7 +274,6 @@ export default function SubcontractorBatchDetailPage() {
       })
 
       if (rpcError) {
-        // Fallback direct update si la RPC renvoie une erreur
         const { error: updateError } = await supabase
           .from('batches')
           .update({
@@ -301,6 +333,7 @@ export default function SubcontractorBatchDetailPage() {
         .map(([to_state_id, quantity]) => ({
           to_state_id,
           quantity,
+          model_id: selectedModelId || batch.model_id || null,
         }))
 
       const { data, error: rpcError } = await supabase.rpc('record_batch_update', {
@@ -311,7 +344,6 @@ export default function SubcontractorBatchDetailPage() {
 
       if (rpcError) throw rpcError
 
-      // Calculer le montant gagné sur cette opération
       let wonAmount = 0
       if (data && typeof data === 'object' && Array.isArray((data as { updates?: { amount?: number }[] }).updates)) {
         wonAmount = (data as { updates: { amount?: number }[] }).updates.reduce(
@@ -333,7 +365,6 @@ export default function SubcontractorBatchDetailPage() {
       })
       setComment('')
 
-      // Recharger les données fraîches du lot et de l'historique
       await loadBatchData()
       router.refresh()
     } catch (err: unknown) {
@@ -351,28 +382,25 @@ export default function SubcontractorBatchDetailPage() {
 
   if (loading) {
     return (
-      <div className="space-y-4 pb-12">
-        <div className="flex items-center gap-2">
-          <Skeleton className="h-10 w-24" />
-        </div>
+      <div className="space-y-4 py-4">
+        <Skeleton className="h-8 w-32" />
         <Skeleton className="h-44 w-full rounded-xl" />
-        <Skeleton className="h-60 w-full rounded-xl" />
-        <Skeleton className="h-48 w-full rounded-xl" />
+        <Skeleton className="h-64 w-full rounded-xl" />
       </div>
     )
   }
 
   if (error || !batch) {
     return (
-      <div className="space-y-4 py-6">
-        <Button variant="ghost" asChild>
+      <div className="py-6 space-y-4">
+        <Button variant="ghost" size="sm" asChild>
           <Link href="/subcontractor/batches" className="inline-flex items-center gap-2">
             <ArrowLeft className="h-4 w-4" />
-            Retour à mes lots
+            <span>Retour aux lots</span>
           </Link>
         </Button>
         <ErrorMessage
-          title="Impossible d'accéder au lot"
+          title="Erreur de chargement"
           message={error || 'Ce lot est introuvable ou vous n’y avez pas accès.'}
           onRetry={loadBatchData}
         />
@@ -407,12 +435,14 @@ export default function SubcontractorBatchDetailPage() {
       {/* EN-TÊTE DU LOT */}
       <Card className="shadow-sm border overflow-hidden">
         <CardContent className="p-4 sm:p-5 space-y-4">
-          {/* Ligne 1 : Modèle + Numéro de lot + Statut */}
+          {/* Ligne 1 : Modèles + Numéro de lot + Statut */}
           <div className="flex items-start justify-between gap-2">
             <div>
               <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-                  {batch.model.name}
+                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
+                  {batchModels.length > 0
+                    ? batchModels.map((bm) => bm.model?.name).filter(Boolean).join(' + ')
+                    : batch.model?.name || 'Lot de pièces'}
                 </h1>
                 <span className="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-muted text-muted-foreground">
                   #{shortId}
@@ -424,6 +454,22 @@ export default function SubcontractorBatchDetailPage() {
             </div>
             <BatchStatusBadge status={batch.status} />
           </div>
+
+          {/* Composition multi-modèles détaillée */}
+          {batchModels.length > 0 && (
+            <div className="bg-blue-50/60 dark:bg-blue-950/30 p-2.5 rounded-lg border border-blue-100 dark:border-blue-900/40 space-y-1.5">
+              <span className="text-[11px] font-semibold text-blue-900 dark:text-blue-200 uppercase tracking-wider">
+                Composition du lot :
+              </span>
+              <div className="flex flex-wrap gap-2">
+                {batchModels.map((bm) => (
+                  <Badge key={bm.id} variant="secondary" className="text-xs py-0.5 font-medium">
+                    {bm.model?.name} : <strong className="ml-1 text-primary">{bm.quantity} pièces</strong>
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Ligne 2 : Transition État départ → État prévu */}
           <div className="flex items-center gap-2 flex-wrap bg-slate-50 dark:bg-slate-900/50 p-2.5 rounded-lg border border-slate-100 dark:border-slate-800">
@@ -539,16 +585,36 @@ export default function SubcontractorBatchDetailPage() {
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground mt-1">
-              Indiquez le nombre de pièces dirigées vers chaque état.
+              Indiquez le modèle et le nombre de pièces dirigées vers chaque état.
             </p>
           </CardHeader>
 
           <CardContent className="p-4 sm:p-5 pt-0 space-y-4">
+            {/* Sélecteur de modèle pour la saisie si lot multi-modèles */}
+            {batchModels.length > 0 && (
+              <div className="space-y-1.5 p-3 rounded-md bg-muted/30 border">
+                <label className="text-xs font-semibold text-foreground">
+                  Modèle des pièces à déclarer :
+                </label>
+                <Select value={selectedModelId} onValueChange={setSelectedModelId}>
+                  <SelectTrigger className="w-full bg-card">
+                    <SelectValue placeholder="Sélectionnez le modèle" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {batchModels.map((bm) => (
+                      <SelectItem key={bm.model_id} value={bm.model_id}>
+                        {bm.model?.name} (Lot total : {bm.quantity} pcs)
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             {/* Liste des états dynamiques depuis la DB */}
             <div className="divide-y divide-border rounded-lg border bg-card">
               {states.map((state) => {
                 const currentVal = allocations[state.id] || 0
-                // Max disponible pour ce sélecteur = valeur actuelle + ce qui reste non affecté
                 const maxForThisState = currentVal + Math.max(0, remainingUnallocated)
 
                 return (
@@ -598,69 +664,57 @@ export default function SubcontractorBatchDetailPage() {
             {/* Compteur dynamique en temps réel */}
             <div
               className={cn(
-                'rounded-lg p-3 text-xs sm:text-sm font-medium transition-colors flex items-center justify-between',
-                remainingUnallocated < 0
-                  ? 'bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-200 border border-rose-200 dark:border-rose-900/50'
-                  : remainingUnallocated === 0
-                  ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-900/50'
-                  : 'bg-muted/50 text-foreground border'
+                'flex items-center justify-between text-xs sm:text-sm font-semibold rounded-lg p-3 border transition-colors',
+                remainingUnallocated === 0 && totalAllocated > 0
+                  ? 'bg-emerald-50 border-emerald-300 text-emerald-800 dark:bg-emerald-950/40 dark:border-emerald-800 dark:text-emerald-200'
+                  : remainingUnallocated < 0
+                  ? 'bg-rose-50 border-rose-300 text-rose-800 dark:bg-rose-950/40 dark:border-rose-800 dark:text-rose-200'
+                  : 'bg-muted/60 border-muted text-muted-foreground'
               )}
             >
+              <span>Total sélectionné : {totalAllocated} pièce(s)</span>
               <span>
-                <strong>{totalAllocated}</strong> pièce{totalAllocated > 1 ? 's' : ''} saisie
-                {totalAllocated > 1 ? 's' : ''}
-              </span>
-              <span>
-                {remainingUnallocated > 0 ? (
-                  <>
-                    <strong>{remainingUnallocated}</strong> restante
-                    {remainingUnallocated > 1 ? 's' : ''} non affectée
-                    {remainingUnallocated > 1 ? 's' : ''}
-                  </>
-                ) : remainingUnallocated === 0 ? (
-                  '✓ Totalité du lot répartie'
-                ) : (
-                  `⚠️ Dépassement de ${Math.abs(remainingUnallocated)} pièce(s)`
-                )}
+                {remainingUnallocated === 0 && totalAllocated > 0
+                  ? '✓ Toutes les pièces sont réparties'
+                  : remainingUnallocated > 0
+                  ? `${remainingUnallocated} restante(s) à affecter`
+                  : `Dépassement de ${Math.abs(remainingUnallocated)} pièce(s)`}
               </span>
             </div>
 
             {/* Champ commentaire optionnel */}
             <div className="space-y-1.5">
               <label
-                htmlFor="batch-comment"
-                className="text-xs font-medium text-muted-foreground flex items-center gap-1.5"
+                htmlFor="comment"
+                className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5"
               >
                 <FileText className="h-3.5 w-3.5" />
-                <span>Commentaire (optionnel)</span>
+                <span>Commentaire / Remarques (optionnel)</span>
               </label>
               <Textarea
-                id="batch-comment"
-                placeholder="Remarques, défauts constatés, conditions particulières..."
+                id="comment"
                 value={comment}
                 onChange={(e) => setComment(e.target.value)}
+                placeholder="Ex : 5 pièces légèrement rayées réorientées vers le choix commercial..."
+                rows={2}
                 disabled={submitting}
-                className="resize-none h-20 text-sm"
+                className="text-sm resize-none"
               />
             </div>
 
-            {/* Bouton Valider */}
+            {/* Gros bouton tactile de validation */}
             <Button
               onClick={handleSubmitUpdates}
-              disabled={
-                submitting ||
-                totalAllocated <= 0 ||
-                totalAllocated > remainingQuantity
-              }
-              className="w-full h-14 text-base font-bold shadow-md active:scale-[0.98] transition-all"
+              disabled={submitting || totalAllocated === 0 || totalAllocated > remainingQuantity}
+              className="w-full h-14 text-base font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow active:scale-[0.98]"
               size="lg"
             >
               {submitting ? (
-                'Validation en cours...'
+                'Validation et calcul en cours...'
               ) : (
                 <>
-                  <CheckCircle2 className="mr-2 h-5 w-5" />
-                  Valider la répartition ({totalAllocated} pièces)
+                  <Sparkles className="mr-2 h-5 w-5" />
+                  Valider la répartition ({totalAllocated} pièce{totalAllocated > 1 ? 's' : ''})
                 </>
               )}
             </Button>
@@ -670,23 +724,22 @@ export default function SubcontractorBatchDetailPage() {
 
       {/* SECTION HISTORIQUE DES MISES À JOUR */}
       <Card className="shadow-sm border">
-        <CardHeader className="p-4 sm:p-5 pb-3 flex flex-row items-center justify-between">
-          <CardTitle className="text-base font-bold flex items-center gap-2">
-            <History className="h-4 w-4 text-muted-foreground" />
-            <span>Historique des saisies</span>
-          </CardTitle>
-          {totalAmountEarned > 0 && (
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2.5 py-1 rounded-full border border-emerald-200 dark:border-emerald-900/50">
-              <Coins className="h-3.5 w-3.5" />
-              <span>Total : {formatEUR(totalAmountEarned)}</span>
-            </div>
-          )}
+        <CardHeader className="p-4 sm:p-5 pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base font-bold flex items-center gap-2">
+              <History className="h-4 w-4 text-muted-foreground" />
+              <span>Historique des déclarations</span>
+            </CardTitle>
+            <span className="text-xs font-semibold text-muted-foreground">
+              {updates.length} saisie{updates.length > 1 ? 's' : ''}
+            </span>
+          </div>
         </CardHeader>
 
         <CardContent className="p-4 sm:p-5 pt-0">
           {updates.length === 0 ? (
-            <p className="text-xs text-muted-foreground italic py-3 text-center">
-              Aucune saisie n’a encore été enregistrée pour ce lot.
+            <p className="text-xs text-muted-foreground text-center py-6">
+              Aucune mise à jour enregistrée pour le moment.
             </p>
           ) : (
             <div className="divide-y divide-border">
@@ -706,6 +759,11 @@ export default function SubcontractorBatchDetailPage() {
                   >
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 flex-wrap">
+                        {up.model && (
+                          <Badge variant="outline" className="text-xs font-semibold">
+                            {up.model.name}
+                          </Badge>
+                        )}
                         <StateBadge state={up.to_state} />
                         <span className="font-bold text-sm text-foreground">
                           {up.quantity} pièce{up.quantity > 1 ? 's' : ''}
@@ -749,8 +807,8 @@ export default function SubcontractorBatchDetailPage() {
                     </div>
 
                     {up.comment && (
-                      <p className="text-xs text-muted-foreground italic bg-muted/30 p-2 rounded">
-                        « {up.comment} »
+                      <p className="text-xs italic text-muted-foreground bg-muted/30 px-2.5 py-1 rounded">
+                        &ldquo;{up.comment}&rdquo;
                       </p>
                     )}
                   </div>
@@ -759,15 +817,15 @@ export default function SubcontractorBatchDetailPage() {
             </div>
           )}
 
-          {/* Résumé financier du lot */}
-          {updates.length > 0 && (
-            <div className="mt-4 pt-3 border-t flex items-center justify-between text-sm">
-              <span className="text-muted-foreground font-medium">Cumul sur ce lot :</span>
-              <span className="text-base font-extrabold text-foreground">
-                {formatEUR(totalAmountEarned)}
-              </span>
-            </div>
-          )}
+          {/* Résumé financier en bas de carte */}
+          <div className="mt-4 pt-3 border-t flex items-center justify-between">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              Gain cumulé sur ce lot
+            </span>
+            <span className="text-lg font-extrabold text-emerald-600 dark:text-emerald-400">
+              {formatEUR(totalAmountEarned)}
+            </span>
+          </div>
         </CardContent>
       </Card>
     </div>

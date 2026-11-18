@@ -30,6 +30,7 @@ import { BatchStatusBadge } from '@/components/shared/batch-status-badge'
 import { StateBadge } from '@/components/shared/state-badge'
 
 export type BatchWithUpdates = BatchWithRelations & {
+  batch_models?: Array<{ id: string; quantity: number; model: { name: string } }>
   batch_updates?: Array<{
     id: string
     quantity: number
@@ -213,7 +214,9 @@ export function BatchesClient({
                     onClick={() => router.push(`/admin/batches/${batch.id}`)}
                   >
                     <TableCell className="font-semibold text-foreground">
-                      {batch.model?.name || 'Inconnu'}
+                      {batch.batch_models && batch.batch_models.length > 0
+                        ? batch.batch_models.map((bm) => bm.model?.name).filter(Boolean).join(' + ')
+                        : batch.model?.name || 'Inconnu'}
                     </TableCell>
 
                     <TableCell>

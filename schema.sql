@@ -67,7 +67,7 @@ CREATE INDEX IF NOT EXISTS idx_price_rules_lookup
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS public.batches (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  model_id UUID NOT NULL REFERENCES public.models(id),
+  model_id UUID REFERENCES public.models(id), -- Optionnel si lot multi-modèles
   from_state_id UUID NOT NULL REFERENCES public.states(id),
   expected_state_id UUID NOT NULL REFERENCES public.states(id),
   quantity INTEGER NOT NULL CHECK (quantity > 0),
@@ -86,11 +86,27 @@ CREATE INDEX IF NOT EXISTS idx_batches_status ON public.batches (status);
 CREATE INDEX IF NOT EXISTS idx_batches_model ON public.batches (model_id);
 
 -- =============================================================================
+-- 6.bis Table batch_models (composition multi-modèles d'un lot)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS public.batch_models (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  batch_id UUID NOT NULL REFERENCES public.batches(id) ON DELETE CASCADE,
+  model_id UUID NOT NULL REFERENCES public.models(id) ON DELETE RESTRICT,
+  quantity INTEGER NOT NULL CHECK (quantity > 0),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (batch_id, model_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_batch_models_batch ON public.batch_models (batch_id);
+CREATE INDEX IF NOT EXISTS idx_batch_models_model ON public.batch_models (model_id);
+
+-- =============================================================================
 -- 7. Table batch_updates
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS public.batch_updates (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   batch_id UUID NOT NULL REFERENCES public.batches(id) ON DELETE CASCADE,
+  model_id UUID REFERENCES public.models(id), -- modèle spécifique de la pièce traitée
   to_state_id UUID NOT NULL REFERENCES public.states(id),
   quantity INTEGER NOT NULL CHECK (quantity > 0),
   price_per_piece NUMERIC(10,2) NOT NULL,
@@ -121,7 +137,7 @@ CREATE TABLE IF NOT EXISTS public.audit_log (
 -- =============================================================================
 CREATE OR REPLACE FUNCTION public.record_batch_update(
   p_batch_id UUID,
-  p_updates JSONB,  -- [{to_state_id: uuid, quantity: int}, ...]
+  p_updates JSONB,  -- [{to_state_id: uuid, quantity: int, model_id?: uuid}, ...]
   p_comment TEXT DEFAULT NULL
 ) RETURNS JSONB
 LANGUAGE plpgsql
@@ -134,6 +150,7 @@ DECLARE
   v_total_new INTEGER;
   v_update JSONB;
   v_to_state_id UUID;
+  v_model_id UUID;
   v_qty INTEGER;
   v_price NUMERIC(10,2);
   v_amount NUMERIC(12,2);
@@ -170,7 +187,7 @@ BEGIN
   -- Calculer durée depuis ouverture
   v_duration := EXTRACT(EPOCH FROM (NOW() - v_batch.opened_at))::INTEGER;
 
-  -- Quantité restante
+  -- Quantité restante globale du lot
   SELECT v_batch.quantity - COALESCE(SUM(quantity), 0)
   INTO v_remaining
   FROM batch_updates
@@ -189,13 +206,20 @@ BEGIN
   FOR v_update IN SELECT * FROM jsonb_array_elements(p_updates) LOOP
     v_to_state_id := (v_update->>'to_state_id')::UUID;
     v_qty := (v_update->>'quantity')::INTEGER;
+    
+    -- Modèle ciblé : soit envoyé dans la mise à jour, soit le modèle par défaut du lot
+    IF (v_update ? 'model_id') AND (v_update->>'model_id') IS NOT NULL AND (v_update->>'model_id') != '' THEN
+      v_model_id := (v_update->>'model_id')::UUID;
+    ELSE
+      v_model_id := v_batch.model_id;
+    END IF;
 
     -- Trouver le prix le plus spécifique (model+transition > transition seule)
     SELECT price_per_piece INTO v_price
     FROM price_rules
     WHERE from_state_id = v_batch.from_state_id
       AND to_state_id = v_to_state_id
-      AND (model_id = v_batch.model_id OR model_id IS NULL)
+      AND (model_id = v_model_id OR model_id IS NULL)
       AND valid_from <= NOW()
     ORDER BY
       (model_id IS NOT NULL) DESC,  -- préfère règle spécifique au modèle
@@ -203,19 +227,19 @@ BEGIN
     LIMIT 1;
 
     IF NOT FOUND THEN
-      v_price := 0; -- pas de règle = gratuit (à configurer)
+      v_price := 0; -- pas de règle = gratuit
     END IF;
 
     v_amount := v_price * v_qty;
 
-    INSERT INTO batch_updates (batch_id, to_state_id, quantity, price_per_piece, amount, duration_seconds, comment)
-    VALUES (p_batch_id, v_to_state_id, v_qty, v_price, v_amount, v_duration, p_comment)
+    INSERT INTO batch_updates (batch_id, model_id, to_state_id, quantity, price_per_piece, amount, duration_seconds, comment)
+    VALUES (p_batch_id, v_model_id, v_to_state_id, v_qty, v_price, v_amount, v_duration, p_comment)
     RETURNING id INTO v_new_id;
 
     -- Audit
     INSERT INTO audit_log (table_name, row_id, action, new_data, user_id)
     VALUES ('batch_updates', v_new_id, 'INSERT',
-      jsonb_build_object('batch_id', p_batch_id, 'to_state_id', v_to_state_id, 'quantity', v_qty, 'price', v_price, 'amount', v_amount),
+      jsonb_build_object('batch_id', p_batch_id, 'model_id', v_model_id, 'to_state_id', v_to_state_id, 'quantity', v_qty, 'price', v_price, 'amount', v_amount),
       auth.uid());
 
     v_result := v_result || jsonb_build_object('id', v_new_id, 'amount', v_amount, 'price_per_piece', v_price);
@@ -334,7 +358,7 @@ BEGIN
       JOIN batches b ON bu.batch_id = b.id
       WHERE (v_target_id IS NULL OR b.subcontractor_id = v_target_id)
         AND bu.created_at >= NOW() - INTERVAL '1 day'
-        AND (p_model_id IS NULL OR b.model_id = p_model_id)
+        AND (p_model_id IS NULL OR COALESCE(bu.model_id, b.model_id) = p_model_id)
         AND bu.original_update_id IS NULL
     ), 0),
     'total_week', COALESCE((
@@ -342,7 +366,7 @@ BEGIN
       JOIN batches b ON bu.batch_id = b.id
       WHERE (v_target_id IS NULL OR b.subcontractor_id = v_target_id)
         AND bu.created_at >= NOW() - INTERVAL '7 days'
-        AND (p_model_id IS NULL OR b.model_id = p_model_id)
+        AND (p_model_id IS NULL OR COALESCE(bu.model_id, b.model_id) = p_model_id)
         AND bu.original_update_id IS NULL
     ), 0),
     'total_month', COALESCE((
@@ -350,7 +374,7 @@ BEGIN
       JOIN batches b ON bu.batch_id = b.id
       WHERE (v_target_id IS NULL OR b.subcontractor_id = v_target_id)
         AND bu.created_at >= NOW() - INTERVAL '30 days'
-        AND (p_model_id IS NULL OR b.model_id = p_model_id)
+        AND (p_model_id IS NULL OR COALESCE(bu.model_id, b.model_id) = p_model_id)
         AND bu.original_update_id IS NULL
     ), 0),
     'by_model', (
@@ -358,7 +382,7 @@ BEGIN
         SELECT m.name AS model_name, SUM(bu.amount) AS total
         FROM batch_updates bu
         JOIN batches b ON bu.batch_id = b.id
-        JOIN models m ON b.model_id = m.id
+        JOIN models m ON COALESCE(bu.model_id, b.model_id) = m.id
         WHERE (v_target_id IS NULL OR b.subcontractor_id = v_target_id)
           AND (p_from_date IS NULL OR bu.created_at >= p_from_date)
           AND (p_to_date IS NULL OR bu.created_at <= p_to_date)
@@ -415,6 +439,7 @@ ALTER TABLE public.models ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.states ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.price_rules ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.batches ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.batch_models ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.batch_updates ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
 
@@ -475,6 +500,26 @@ CREATE POLICY "batches_own" ON public.batches
 
 DROP POLICY IF EXISTS "batches_admin_write" ON public.batches;
 CREATE POLICY "batches_admin_write" ON public.batches
+  FOR ALL USING (
+    public.is_admin()
+  );
+
+-- batch_models : sous-traitant voit les modèles de ses lots ; admin voit tout
+DROP POLICY IF EXISTS "batch_models_own" ON public.batch_models;
+CREATE POLICY "batch_models_own" ON public.batch_models
+  FOR SELECT USING (
+    EXISTS (
+      SELECT 1 FROM public.batches
+      WHERE id = batch_id
+        AND (
+          subcontractor_id = auth.uid()
+          OR public.is_admin()
+        )
+    )
+  );
+
+DROP POLICY IF EXISTS "batch_models_admin_write" ON public.batch_models;
+CREATE POLICY "batch_models_admin_write" ON public.batch_models
   FOR ALL USING (
     public.is_admin()
   );

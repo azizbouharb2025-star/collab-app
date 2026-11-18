@@ -3,7 +3,7 @@
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, Save, CheckCircle } from 'lucide-react'
+import { ArrowLeft, Save, CheckCircle, Plus, Trash2 } from 'lucide-react'
 
 import { AppModel, State, Profile, Batch, BatchStatus } from '@/lib/types'
 import { createClient } from '@/lib/supabase/client'
@@ -21,13 +21,18 @@ import {
 } from '@/components/ui/select'
 import { useToast } from '@/hooks/use-toast'
 import { LoadingSpinner } from '@/components/shared/loading-spinner'
-import { StateBadge } from '@/components/shared/state-badge'
+
+interface ModelAllocation {
+  model_id: string
+  quantity: number
+}
 
 interface BatchFormProps {
   models: AppModel[]
   states: State[]
   subcontractors: Profile[]
   initialData?: Batch
+  initialModelAllocations?: ModelAllocation[]
   isEdit?: boolean
 }
 
@@ -36,6 +41,7 @@ export function BatchForm({
   states,
   subcontractors,
   initialData,
+  initialModelAllocations,
   isEdit = false,
 }: BatchFormProps) {
   const router = useRouter()
@@ -43,7 +49,18 @@ export function BatchForm({
   const supabase = createClient()
 
   const [loading, setLoading] = React.useState(false)
-  const [modelId, setModelId] = React.useState(initialData?.model_id || (models[0]?.id ?? ''))
+
+  // Mode multi-modèles avec quantité par modèle
+  const [modelAllocations, setModelAllocations] = React.useState<ModelAllocation[]>(() => {
+    if (initialModelAllocations && initialModelAllocations.length > 0) {
+      return initialModelAllocations
+    }
+    if (initialData?.model_id) {
+      return [{ model_id: initialData.model_id, quantity: initialData.quantity || 100 }]
+    }
+    return [{ model_id: models[0]?.id ?? '', quantity: 100 }]
+  })
+
   const [fromStateId, setFromStateId] = React.useState(
     initialData?.from_state_id ||
       states.find((s) => !s.is_final)?.id ||
@@ -56,9 +73,6 @@ export function BatchForm({
       states[states.length - 1]?.id ||
       ''
   )
-  const [quantity, setQuantity] = React.useState<number>(
-    initialData?.quantity || 100
-  )
   const [subcontractorId, setSubcontractorId] = React.useState(
     initialData?.subcontractor_id || subcontractors[0]?.id || ''
   )
@@ -66,6 +80,11 @@ export function BatchForm({
     initialData?.status || 'sent'
   )
   const [note, setNote] = React.useState(initialData?.note || '')
+
+  // Calcul automatique de la quantité totale = somme des modèles
+  const totalQuantity = React.useMemo(() => {
+    return modelAllocations.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0)
+  }, [modelAllocations])
 
   // Non-final states for from_state
   const nonFinalStates = React.useMemo(
@@ -80,16 +99,73 @@ export function BatchForm({
     return states.filter((s) => s.order >= fromState.order || s.is_final)
   }, [states, fromStateId])
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const handleAddModel = () => {
+    const existingIds = new Set(modelAllocations.map((m) => m.model_id))
+    const nextModel = models.find((m) => !existingIds.has(m.id)) || models[0]
+    if (nextModel) {
+      setModelAllocations((prev) => [...prev, { model_id: nextModel.id, quantity: 50 }])
+    }
+  }
 
-    if (!modelId) {
+  const handleRemoveModel = (index: number) => {
+    if (modelAllocations.length <= 1) {
       toast({
-        title: 'Erreur',
-        description: 'Veuillez sélectionner un modèle.',
+        title: 'Attention',
+        description: 'Un lot doit comporter au moins un modèle.',
         variant: 'destructive',
       })
       return
+    }
+    setModelAllocations((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const handleUpdateAllocation = (index: number, field: keyof ModelAllocation, value: string | number) => {
+    setModelAllocations((prev) =>
+      prev.map((item, i) => (i === index ? { ...item, [field]: value } : item))
+    )
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    if (modelAllocations.length === 0) {
+      toast({
+        title: 'Erreur',
+        description: 'Veuillez ajouter au moins un modèle avec sa quantité.',
+        variant: 'destructive',
+      })
+      return
+    }
+
+    // Vérifier les doublons de modèles
+    const modelSet = new Set<string>()
+    for (const alloc of modelAllocations) {
+      if (!alloc.model_id) {
+        toast({
+          title: 'Erreur',
+          description: 'Chaque ligne doit avoir un modèle sélectionné.',
+          variant: 'destructive',
+        })
+        return
+      }
+      if (modelSet.has(alloc.model_id)) {
+        toast({
+          title: 'Erreur',
+          description: 'Un modèle ne peut pas apparaître deux fois. Regroupez les quantités.',
+          variant: 'destructive',
+        })
+        return
+      }
+      modelSet.add(alloc.model_id)
+
+      if (!alloc.quantity || alloc.quantity <= 0) {
+        toast({
+          title: 'Erreur',
+          description: 'Chaque modèle doit avoir une quantité strictement supérieure à 0.',
+          variant: 'destructive',
+        })
+        return
+      }
     }
 
     if (!fromStateId || !expectedStateId) {
@@ -101,10 +177,10 @@ export function BatchForm({
       return
     }
 
-    if (!quantity || quantity <= 0) {
+    if (totalQuantity <= 0) {
       toast({
         title: 'Erreur',
-        description: 'La quantité doit être supérieure à 0.',
+        description: 'La quantité totale du lot doit être supérieure à 0.',
         variant: 'destructive',
       })
       return
@@ -122,14 +198,16 @@ export function BatchForm({
     setLoading(true)
 
     try {
+      const primaryModelId = modelAllocations[0].model_id
+      const nowIso = new Date().toISOString()
+
       if (isEdit && initialData) {
-        // Prepare timestamp updates if status changes
-        const nowIso = new Date().toISOString()
+        // 1. Mettre à jour le lot
         const updatePayload: Record<string, unknown> = {
-          model_id: modelId,
+          model_id: primaryModelId,
           from_state_id: fromStateId,
           expected_state_id: expectedStateId,
-          quantity: Number(quantity),
+          quantity: totalQuantity,
           subcontractor_id: subcontractorId,
           status,
           note: note ? note.trim() : null,
@@ -144,45 +222,72 @@ export function BatchForm({
           updatePayload.closed_at = nowIso
         }
 
-        const { error } = await supabase
+        const { error: batchErr } = await supabase
           .from('batches')
           .update(updatePayload)
           .eq('id', initialData.id)
 
-        if (error) throw error
+        if (batchErr) throw batchErr
+
+        // 2. Mettre à jour batch_models (suppression puis réinsertion)
+        await supabase.from('batch_models').delete().eq('batch_id', initialData.id)
+
+        const batchModelsToInsert = modelAllocations.map((alloc) => ({
+          batch_id: initialData.id,
+          model_id: alloc.model_id,
+          quantity: Number(alloc.quantity),
+        }))
+
+        const { error: modelsInsertErr } = await supabase
+          .from('batch_models')
+          .insert(batchModelsToInsert)
+
+        if (modelsInsertErr) console.warn('Note batch_models insert:', modelsInsertErr.message)
 
         toast({
           title: 'Lot mis à jour',
-          description: 'Les modifications ont été enregistrées avec succès.',
+          description: 'Les modifications et la composition ont été enregistrées.',
         })
 
         router.push(`/admin/batches/${initialData.id}`)
         router.refresh()
       } else {
-        // Create new batch
-        const nowIso = new Date().toISOString()
+        // 1. Créer le nouveau lot
         const newBatchPayload: Record<string, unknown> = {
-          model_id: modelId,
+          model_id: primaryModelId,
           from_state_id: fromStateId,
           expected_state_id: expectedStateId,
-          quantity: Number(quantity),
+          quantity: totalQuantity,
           subcontractor_id: subcontractorId,
-          status: 'sent', // New batches are marked sent by default
+          status: 'sent',
           sent_at: nowIso,
           note: note ? note.trim() : null,
         }
 
-        const { data: newBatch, error } = await supabase
+        const { data: newBatch, error: batchCreateErr } = await supabase
           .from('batches')
           .insert(newBatchPayload)
           .select('id')
           .single()
 
-        if (error) throw error
+        if (batchCreateErr) throw batchCreateErr
+
+        // 2. Insérer la répartition des modèles dans batch_models
+        const batchModelsToInsert = modelAllocations.map((alloc) => ({
+          batch_id: newBatch.id,
+          model_id: alloc.model_id,
+          quantity: Number(alloc.quantity),
+        }))
+
+        const { error: modelsInsertErr } = await supabase
+          .from('batch_models')
+          .insert(batchModelsToInsert)
+
+        if (modelsInsertErr) console.warn('Note batch_models insert:', modelsInsertErr.message)
 
         toast({
           title: 'Lot créé',
-          description: 'Le nouveau lot a été créé et envoyé au sous-traitant.',
+          description: `Le lot multi-modèles (${totalQuantity} pièces) a été envoyé au sous-traitant.`,
         })
 
         router.push(`/admin/batches/${newBatch.id}`)
@@ -217,8 +322,8 @@ export function BatchForm({
           </h1>
           <p className="text-sm text-muted-foreground">
             {isEdit
-              ? 'Mettez à jour les caractéristiques du lot'
-              : 'Définissez le modèle, les états de transition et assignez un sous-traitant'}
+              ? 'Mettez à jour les caractéristiques et les modèles du lot'
+              : 'Définissez la composition par modèle, les états et assignez un sous-traitant'}
           </p>
         </div>
       </div>
@@ -226,28 +331,95 @@ export function BatchForm({
       <form onSubmit={handleSubmit}>
         <Card>
           <CardHeader>
-            <CardTitle>Détails du lot</CardTitle>
+            <CardTitle>Composition et Détails du lot</CardTitle>
             <CardDescription>
-              Tous les champs signalés par un astérisque (*) sont requis.
+              Vous pouvez associer plusieurs modèles à ce lot en indiquant la quantité pour chacun.
             </CardDescription>
           </CardHeader>
 
           <CardContent className="space-y-6">
-            {/* Modèle */}
-            <div className="space-y-2">
-              <Label htmlFor="model">Modèle de pièce *</Label>
-              <Select value={modelId} onValueChange={setModelId}>
-                <SelectTrigger id="model">
-                  <SelectValue placeholder="Sélectionnez un modèle" />
-                </SelectTrigger>
-                <SelectContent>
-                  {models.map((m) => (
-                    <SelectItem key={m.id} value={m.id}>
-                      {m.name} {!m.active && '(Inactif)'}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            {/* Section Multi-modèles */}
+            <div className="space-y-4 rounded-lg border bg-muted/30 p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <Label className="text-base font-semibold">Modèles et Quantités du lot *</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Ajoutez un ou plusieurs modèles de pièces avec leurs quantités respectives.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleAddModel}
+                  className="h-8 gap-1.5"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Ajouter un modèle
+                </Button>
+              </div>
+
+              <div className="space-y-3">
+                {modelAllocations.map((alloc, idx) => (
+                  <div
+                    key={idx}
+                    className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 bg-card p-3 rounded-md border"
+                  >
+                    <div className="flex-1 space-y-1">
+                      <Label className="text-xs text-muted-foreground">Modèle {idx + 1}</Label>
+                      <Select
+                        value={alloc.model_id}
+                        onValueChange={(val) => handleUpdateAllocation(idx, 'model_id', val)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Sélectionnez un modèle" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {models.map((m) => (
+                            <SelectItem key={m.id} value={m.id}>
+                              {m.name} {!m.active && '(Inactif)'}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="w-full sm:w-40 space-y-1">
+                      <Label className="text-xs text-muted-foreground">Quantité (pièces)</Label>
+                      <Input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={alloc.quantity}
+                        onChange={(e) =>
+                          handleUpdateAllocation(idx, 'quantity', parseInt(e.target.value) || 0)
+                        }
+                        required
+                      />
+                    </div>
+
+                    <div className="flex sm:self-end pt-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="text-muted-foreground hover:text-destructive h-9 w-9"
+                        onClick={() => handleRemoveModel(idx)}
+                        disabled={modelAllocations.length <= 1}
+                        title="Supprimer ce modèle"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Résumé de la quantité totale */}
+              <div className="flex justify-between items-center pt-2 border-t text-sm font-medium">
+                <span className="text-muted-foreground">Quantité totale calculée :</span>
+                <span className="text-lg font-bold text-primary">{totalQuantity} pièces</span>
+              </div>
             </div>
 
             {/* États */}
@@ -305,40 +477,24 @@ export function BatchForm({
               </div>
             </div>
 
-            {/* Quantité & Sous-traitant */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="quantity">Quantité de pièces *</Label>
-                <Input
-                  id="quantity"
-                  type="number"
-                  min="1"
-                  step="1"
-                  value={quantity}
-                  onChange={(e) => setQuantity(parseInt(e.target.value) || 0)}
-                  placeholder="Ex: 150"
-                  required
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="subcontractor">Sous-traitant assigné *</Label>
-                <Select
-                  value={subcontractorId}
-                  onValueChange={setSubcontractorId}
-                >
-                  <SelectTrigger id="subcontractor">
-                    <SelectValue placeholder="Sélectionnez un sous-traitant" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {subcontractors.map((sub) => (
-                      <SelectItem key={sub.id} value={sub.id}>
-                        {sub.full_name || sub.email}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+            {/* Sous-traitant */}
+            <div className="space-y-2">
+              <Label htmlFor="subcontractor">Sous-traitant assigné *</Label>
+              <Select
+                value={subcontractorId}
+                onValueChange={setSubcontractorId}
+              >
+                <SelectTrigger id="subcontractor">
+                  <SelectValue placeholder="Sélectionnez un sous-traitant" />
+                </SelectTrigger>
+                <SelectContent>
+                  {subcontractors.map((sub) => (
+                    <SelectItem key={sub.id} value={sub.id}>
+                      {sub.full_name || sub.email}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             {/* Statut (only for edit) */}

@@ -15,12 +15,13 @@ interface EditBatchPageProps {
 export default async function EditBatchPage({ params }: EditBatchPageProps) {
   const supabase = await createClient()
 
-  // Fetch batch, models, states, subcontractors
+  // Fetch batch, models, states, subcontractors, batch_models
   const [
     { data: batchData, error: batchError },
     { data: modelsData, error: modelsError },
     { data: statesData, error: statesError },
     { data: subcontractorsData, error: subsError },
+    { data: batchModelsData },
   ] = await Promise.all([
     supabase.from('batches').select('*').eq('id', params.id).single(),
     supabase.from('models').select('*').order('name'),
@@ -30,6 +31,10 @@ export default async function EditBatchPage({ params }: EditBatchPageProps) {
       .select('*')
       .eq('role', 'subcontractor')
       .order('full_name'),
+    supabase
+      .from('batch_models')
+      .select('model_id, quantity')
+      .eq('batch_id', params.id),
   ])
 
   if (batchError || !batchData) {
@@ -64,6 +69,7 @@ export default async function EditBatchPage({ params }: EditBatchPageProps) {
         states={(statesData || []) as State[]}
         subcontractors={(subcontractorsData || []) as Profile[]}
         initialData={batchData as Batch}
+        initialModelAllocations={batchModelsData as { model_id: string; quantity: number }[] | undefined}
         isEdit={true}
       />
     </div>

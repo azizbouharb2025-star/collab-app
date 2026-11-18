@@ -47,8 +47,14 @@ export default async function BatchDetailPage({ params }: BatchDetailPageProps) 
       from_state:states!batches_from_state_id_fkey(*),
       expected_state:states!batches_expected_state_id_fkey(*),
       subcontractor:profiles!batches_subcontractor_id_fkey(*),
+      batch_models(
+        id,
+        quantity,
+        model:models(*)
+      ),
       batch_updates(
         *,
+        model:models(*),
         to_state:states!batch_updates_to_state_id_fkey(*),
         corrector:profiles!batch_updates_corrected_by_fkey(*)
       )
@@ -71,7 +77,8 @@ export default async function BatchDetailPage({ params }: BatchDetailPageProps) 
   }
 
   const batch = batchData as unknown as BatchWithRelations & {
-    batch_updates: UpdateDetail[]
+    batch_models?: Array<{ id: string; quantity: number; model: AppModel }>
+    batch_updates: (UpdateDetail & { model?: AppModel })[]
   }
 
   // Currency & date formatters
@@ -122,7 +129,9 @@ export default async function BatchDetailPage({ params }: BatchDetailPageProps) 
           </Link>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-bold tracking-tight">
-              Lot {batch.model?.name}
+              Lot {batch.batch_models && batch.batch_models.length > 0
+                ? batch.batch_models.map((bm) => bm.model?.name).filter(Boolean).join(' + ')
+                : batch.model?.name || 'Multi-modèles'}
             </h1>
             <span className="text-sm text-muted-foreground font-mono">
               #{batch.id.slice(0, 8)}
@@ -180,6 +189,22 @@ export default async function BatchDetailPage({ params }: BatchDetailPageProps) 
               </p>
             </div>
           </div>
+
+          {/* Composition multi-modèles si présente */}
+          {batch.batch_models && batch.batch_models.length > 0 && (
+            <div className="p-4 rounded-lg bg-blue-50/50 dark:bg-blue-950/20 border border-blue-200 dark:border-blue-900 space-y-2">
+              <p className="text-xs font-semibold text-blue-900 dark:text-blue-300 uppercase tracking-wider">
+                Composition par modèle :
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {batch.batch_models.map((bm) => (
+                  <Badge key={bm.id} variant="secondary" className="px-3 py-1 font-medium text-sm">
+                    {bm.model?.name} : <strong className="ml-1 text-primary">{bm.quantity} pièces</strong>
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Progress Bar */}
           <div className="space-y-2">
@@ -268,6 +293,7 @@ export default async function BatchDetailPage({ params }: BatchDetailPageProps) 
                 <TableHeader>
                   <TableRow>
                     <TableHead>Date / Heure</TableHead>
+                    <TableHead>Modèle</TableHead>
                     <TableHead>État cible</TableHead>
                     <TableHead className="text-right">Quantité</TableHead>
                     <TableHead className="text-right">Prix unit.</TableHead>
@@ -293,6 +319,12 @@ export default async function BatchDetailPage({ params }: BatchDetailPageProps) 
                       >
                         <TableCell className="font-medium whitespace-nowrap text-sm">
                           {formatDateTime(update.created_at)}
+                        </TableCell>
+
+                        <TableCell className="text-sm">
+                          <span className="font-semibold text-foreground">
+                            {update.model?.name || batch.model?.name || '—'}
+                          </span>
                         </TableCell>
 
                         <TableCell>

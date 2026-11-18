@@ -38,9 +38,18 @@ export type PriceRule = {
 
 export type BatchStatus = 'draft' | 'sent' | 'open' | 'completed' | 'closed'
 
+export type BatchModel = {
+  id: string
+  batch_id: string
+  model_id: string
+  quantity: number
+  created_at: string
+  model?: AppModel
+}
+
 export type Batch = {
   id: string
-  model_id: string
+  model_id: string | null
   from_state_id: string
   expected_state_id: string
   quantity: number
@@ -57,6 +66,7 @@ export type Batch = {
 export type BatchUpdate = {
   id: string
   batch_id: string
+  model_id?: string | null
   to_state_id: string
   quantity: number
   price_per_piece: number
@@ -81,7 +91,8 @@ export type AuditLog = {
 }
 
 export type BatchWithRelations = Batch & {
-  model: AppModel
+  model?: AppModel | null
+  models?: Array<{ id: string; model_id: string; quantity: number; model?: AppModel }>
   from_state: State
   expected_state: State
   subcontractor: Profile
@@ -89,6 +100,7 @@ export type BatchWithRelations = Batch & {
 
 export type BatchUpdateWithRelations = BatchUpdate & {
   to_state: State
+  model?: AppModel | null
 }
 
 export type PriceRuleWithRelations = PriceRule & {
@@ -100,6 +112,7 @@ export type PriceRuleWithRelations = PriceRule & {
 export type RecordBatchUpdateItem = {
   to_state_id: string
   quantity: number
+  model_id?: string | null
 }
 
 export type EarningsByModel = {

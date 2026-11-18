@@ -17,6 +17,7 @@ export default async function AdminBatchesPage() {
       from_state:states!batches_from_state_id_fkey(*),
       expected_state:states!batches_expected_state_id_fkey(*),
       subcontractor:profiles!batches_subcontractor_id_fkey(*),
+      batch_models(id, quantity, model:models(*)),
       batch_updates(id, quantity, to_state_id, created_at, original_update_id)
     `)
     .order('created_at', { ascending: false })
