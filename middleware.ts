@@ -45,7 +45,17 @@ export async function middleware(request: NextRequest) {
       .eq('id', user.id)
       .single()
 
-    const role = profile?.role as 'admin' | 'subcontractor' | undefined
+    // If profile is not found or error, let the user stay on login or fall back to /login
+    if (!profile) {
+      if (pathname === '/login') {
+        return response
+      }
+      const loginUrl = request.nextUrl.clone()
+      loginUrl.pathname = '/login'
+      return NextResponse.redirect(loginUrl)
+    }
+
+    const role = profile.role as 'admin' | 'subcontractor'
 
     // Root path → redirect by role
     if (pathname === '/') {

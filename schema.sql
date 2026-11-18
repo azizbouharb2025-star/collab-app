@@ -390,6 +390,24 @@ END;
 $$;
 
 -- =============================================================================
+-- 11.bis Helper function pour vérifier le rôle admin (évite la récursion RLS)
+-- =============================================================================
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+STABLE
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid() AND role = 'admin'
+  );
+$$;
+
+GRANT EXECUTE ON FUNCTION public.is_admin TO authenticated, anon;
+
+-- =============================================================================
 -- 12. RLS — Row Level Security
 -- =============================================================================
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
@@ -405,7 +423,7 @@ DROP POLICY IF EXISTS "profiles_select_own" ON public.profiles;
 CREATE POLICY "profiles_select_own" ON public.profiles
   FOR SELECT USING (
     auth.uid() = id
-    OR EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin')
+    OR public.is_admin()
   );
 
 DROP POLICY IF EXISTS "profiles_update_own" ON public.profiles;
@@ -415,7 +433,7 @@ CREATE POLICY "profiles_update_own" ON public.profiles
 DROP POLICY IF EXISTS "profiles_admin_all" ON public.profiles;
 CREATE POLICY "profiles_admin_all" ON public.profiles
   FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = auth.uid() AND p.role = 'admin')
+    public.is_admin()
   );
 
 -- models : lecture par tous les authentifiés ; écriture par admin
@@ -426,7 +444,7 @@ CREATE POLICY "models_select_auth" ON public.models
 DROP POLICY IF EXISTS "models_admin_write" ON public.models;
 CREATE POLICY "models_admin_write" ON public.models
   FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+    public.is_admin()
   );
 
 -- states : lecture par tous les authentifiés ; écriture par admin
@@ -437,14 +455,14 @@ CREATE POLICY "states_select_auth" ON public.states
 DROP POLICY IF EXISTS "states_admin_write" ON public.states;
 CREATE POLICY "states_admin_write" ON public.states
   FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+    public.is_admin()
   );
 
 -- price_rules : admin seulement
 DROP POLICY IF EXISTS "price_rules_admin" ON public.price_rules;
 CREATE POLICY "price_rules_admin" ON public.price_rules
   FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+    public.is_admin()
   );
 
 -- batches : sous-traitant voit ses lots ; admin voit tout
@@ -452,13 +470,13 @@ DROP POLICY IF EXISTS "batches_own" ON public.batches;
 CREATE POLICY "batches_own" ON public.batches
   FOR SELECT USING (
     subcontractor_id = auth.uid()
-    OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+    OR public.is_admin()
   );
 
 DROP POLICY IF EXISTS "batches_admin_write" ON public.batches;
 CREATE POLICY "batches_admin_write" ON public.batches
   FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+    public.is_admin()
   );
 
 -- batch_updates : sous-traitant voit ses mises à jour via ses lots
@@ -470,7 +488,7 @@ CREATE POLICY "batch_updates_own" ON public.batch_updates
       WHERE id = batch_id
         AND (
           subcontractor_id = auth.uid()
-          OR EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+          OR public.is_admin()
         )
     )
   );
@@ -478,14 +496,14 @@ CREATE POLICY "batch_updates_own" ON public.batch_updates
 DROP POLICY IF EXISTS "batch_updates_admin_write" ON public.batch_updates;
 CREATE POLICY "batch_updates_admin_write" ON public.batch_updates
   FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+    public.is_admin()
   );
 
 -- audit_log : admin seulement
 DROP POLICY IF EXISTS "audit_log_admin" ON public.audit_log;
 CREATE POLICY "audit_log_admin" ON public.audit_log
   FOR ALL USING (
-    EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'admin')
+    public.is_admin()
   );
 
 -- =============================================================================
