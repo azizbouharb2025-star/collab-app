@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/select'
 import { BatchStatusBadge } from '@/components/shared/batch-status-badge'
 import { StateBadge } from '@/components/shared/state-badge'
+import { getBatchDisplayName } from '@/lib/utils'
 
 export type BatchWithUpdates = BatchWithRelations & {
   batch_models?: Array<{ id: string; quantity: number; model: { name: string } }>
@@ -148,7 +149,8 @@ export function BatchesClient({
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Modèle</TableHead>
+              <TableHead>Nom du lot</TableHead>
+              <TableHead>Modèle(s)</TableHead>
               <TableHead>Transition d&apos;état</TableHead>
               <TableHead>Sous-traitant</TableHead>
               <TableHead className="text-right">Quantité</TableHead>
@@ -214,9 +216,20 @@ export function BatchesClient({
                     onClick={() => router.push(`/admin/batches/${batch.id}`)}
                   >
                     <TableCell className="font-semibold text-foreground">
+                      <div className="flex flex-col">
+                        <span className="font-bold text-foreground">
+                          {getBatchDisplayName(batch)}
+                        </span>
+                        <span className="text-[11px] text-muted-foreground font-mono">
+                          #{batch.id.slice(0, 8)}
+                        </span>
+                      </div>
+                    </TableCell>
+
+                    <TableCell className="text-sm text-muted-foreground">
                       {batch.batch_models && batch.batch_models.length > 0
                         ? batch.batch_models.map((bm) => bm.model?.name).filter(Boolean).join(' + ')
-                        : batch.model?.name || 'Inconnu'}
+                        : batch.model?.name || '—'}
                     </TableCell>
 
                     <TableCell>

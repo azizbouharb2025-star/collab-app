@@ -234,10 +234,10 @@ export default function AdminRecapPage() {
 
   // Formatters
   const formatCurrency = (amount: number) =>
-    new Intl.NumberFormat('fr-FR', {
-      style: 'currency',
-      currency: 'EUR',
-    }).format(amount)
+    new Intl.NumberFormat('fr-TN', {
+      minimumFractionDigits: 3,
+      maximumFractionDigits: 3,
+    }).format(amount || 0) + ' TND'
 
   // Compute 4 KPIs
   const totalPieces = React.useMemo(

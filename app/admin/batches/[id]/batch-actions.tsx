@@ -3,7 +3,7 @@
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Edit, CheckSquare } from 'lucide-react'
+import { Edit, CheckSquare, Trash2 } from 'lucide-react'
 
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -21,6 +21,7 @@ export function BatchActions({ batchId, status }: BatchActionsProps) {
   const { toast } = useToast()
   const supabase = createClient()
   const [loading, setLoading] = React.useState(false)
+  const [deleting, setDeleting] = React.useState(false)
 
   const handleCloseBatch = async () => {
     try {
@@ -55,8 +56,39 @@ export function BatchActions({ batchId, status }: BatchActionsProps) {
     }
   }
 
+  const handleDeleteBatch = async () => {
+    try {
+      setDeleting(true)
+      // Suppression du lot (les relations batch_updates et batch_models ont ON DELETE CASCADE)
+      const { error } = await supabase
+        .from('batches')
+        .delete()
+        .eq('id', batchId)
+
+      if (error) throw error
+
+      toast({
+        title: 'Lot supprimé',
+        description: 'Le lot et toutes ses données associées ont été définitivement supprimés.',
+      })
+
+      router.push('/admin/batches')
+      router.refresh()
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : 'Impossible de supprimer le lot'
+      toast({
+        title: 'Erreur de suppression',
+        description: message,
+        variant: 'destructive',
+      })
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 flex-wrap">
       <Link href={`/admin/batches/${batchId}/edit`}>
         <Button variant="outline" size="sm">
           <Edit className="mr-2 h-4 w-4" />
@@ -81,6 +113,23 @@ export function BatchActions({ batchId, status }: BatchActionsProps) {
           }
         />
       )}
+
+      {/* Bouton Supprimer pour l'Admin */}
+      <ConfirmDialog
+        title="Supprimer définitivement ce lot ?"
+        description="Attention : Cette action est irréversible. Le lot ainsi que toutes ses saisies et compositions seront définitivement effacés."
+        confirmLabel="Oui, supprimer le lot"
+        cancelLabel="Annuler"
+        variant="destructive"
+        loading={deleting}
+        onConfirm={handleDeleteBatch}
+        trigger={
+          <Button variant="destructive" size="sm">
+            <Trash2 className="mr-2 h-4 w-4" />
+            Supprimer
+          </Button>
+        }
+      />
     </div>
   )
 }

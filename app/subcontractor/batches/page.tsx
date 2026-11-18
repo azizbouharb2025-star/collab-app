@@ -20,7 +20,7 @@ import { Button } from '@/components/ui/button'
 import { BatchStatusBadge } from '@/components/shared/batch-status-badge'
 import { StateBadge } from '@/components/shared/state-badge'
 import { Stopwatch } from '@/components/shared/stopwatch'
-import { cn } from '@/lib/utils'
+import { cn, getBatchDisplayName } from '@/lib/utils'
 
 export const dynamic = 'force-dynamic'
 
@@ -318,16 +318,16 @@ export default async function SubcontractorBatchesPage({ searchParams }: PagePro
                   {/* Titre & Statut */}
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-lg font-bold tracking-tight text-slate-900 dark:text-slate-100">
-                          {batch.model.name}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-base sm:text-lg font-bold tracking-tight text-slate-900 dark:text-slate-100">
+                          {getBatchDisplayName(batch)}
                         </span>
                         <span className="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-muted text-muted-foreground">
                           #{shortId}
                         </span>
                       </div>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        Assigné le {dateDisplay}
+                        Modèles : {batch.model.name}
                       </p>
                     </div>
                     <BatchStatusBadge status={batch.status} />

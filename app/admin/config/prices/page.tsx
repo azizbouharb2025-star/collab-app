@@ -142,10 +142,10 @@ export default function AdminConfigPricesPage() {
   }, [loadData])
 
   const formatCurrency = (amount: number) =>
-    new Intl.NumberFormat('fr-FR', {
-      style: 'currency',
-      currency: 'EUR',
-    }).format(amount)
+    new Intl.NumberFormat('fr-TN', {
+      minimumFractionDigits: 3,
+      maximumFractionDigits: 3,
+    }).format(amount || 0) + ' TND'
 
   const handleOpenAdd = () => {
     if (states.length >= 2) {

@@ -118,10 +118,10 @@ export default function CorrectUpdatePage({ params }: CorrectUpdatePageProps) {
   }, [loadData])
 
   const formatCurrency = (amount: number) =>
-    new Intl.NumberFormat('fr-FR', {
-      style: 'currency',
-      currency: 'EUR',
-    }).format(amount)
+    new Intl.NumberFormat('fr-TN', {
+      minimumFractionDigits: 3,
+      maximumFractionDigits: 3,
+    }).format(amount || 0) + ' TND'
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()

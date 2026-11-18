@@ -51,10 +51,12 @@ import { ErrorMessage } from '@/components/shared/error-message'
 import { cn } from '@/lib/utils'
 
 function formatEUR(amount: number): string {
-  return new Intl.NumberFormat('fr-FR', {
-    style: 'currency',
-    currency: 'EUR',
-  }).format(amount)
+  return (
+    new Intl.NumberFormat('fr-TN', {
+      minimumFractionDigits: 3,
+      maximumFractionDigits: 3,
+    }).format(amount || 0) + ' TND'
+  )
 }
 
 type PeriodOption = 'today' | '7d' | '30d' | 'all'

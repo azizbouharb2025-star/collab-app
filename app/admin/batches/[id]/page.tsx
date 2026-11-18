@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/table'
 import { BatchActions } from './batch-actions'
 import { BatchWithRelations, BatchUpdateWithRelations, Profile } from '@/lib/types'
+import { getBatchDisplayName } from '@/lib/utils'
 
 export const dynamic = 'force-dynamic'
 
@@ -83,10 +84,10 @@ export default async function BatchDetailPage({ params }: BatchDetailPageProps) 
 
   // Currency & date formatters
   const formatCurrency = (amount: number) =>
-    new Intl.NumberFormat('fr-FR', {
-      style: 'currency',
-      currency: 'EUR',
-    }).format(amount)
+    new Intl.NumberFormat('fr-TN', {
+      minimumFractionDigits: 3,
+      maximumFractionDigits: 3,
+    }).format(amount || 0) + ' TND'
 
   const formatDateTime = (dateStr?: string | null) => {
     if (!dateStr) return '—'
@@ -129,9 +130,7 @@ export default async function BatchDetailPage({ params }: BatchDetailPageProps) 
           </Link>
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-bold tracking-tight">
-              Lot {batch.batch_models && batch.batch_models.length > 0
-                ? batch.batch_models.map((bm) => bm.model?.name).filter(Boolean).join(' + ')
-                : batch.model?.name || 'Multi-modèles'}
+              {getBatchDisplayName(batch)}
             </h1>
             <span className="text-sm text-muted-foreground font-mono">
               #{batch.id.slice(0, 8)}

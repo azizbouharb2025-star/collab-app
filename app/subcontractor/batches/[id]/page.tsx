@@ -47,13 +47,15 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { useToast } from '@/hooks/use-toast'
-import { cn } from '@/lib/utils'
+import { cn, getBatchDisplayName } from '@/lib/utils'
 
 function formatEUR(amount: number): string {
-  return new Intl.NumberFormat('fr-FR', {
-    style: 'currency',
-    currency: 'EUR',
-  }).format(amount)
+  return (
+    new Intl.NumberFormat('fr-TN', {
+      minimumFractionDigits: 3,
+      maximumFractionDigits: 3,
+    }).format(amount || 0) + ' TND'
+  )
 }
 
 type BatchUpdateWithState = BatchUpdate & {
@@ -83,6 +85,10 @@ export default function SubcontractorBatchDetailPage() {
   const [submitting, setSubmitting] = React.useState(false)
   const [opening, setOpening] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
+
+  // Gestion du chronomètre individuel par pièce/répartition avec pause
+  const [stepSeconds, setStepSeconds] = React.useState<number>(0)
+  const [isTimerPaused, setIsTimerPaused] = React.useState<boolean>(false)
 
   // Saisie dynamique par état : { [stateId]: quantity }
   const [allocations, setAllocations] = React.useState<Record<string, number>>({})
@@ -206,6 +212,17 @@ export default function SubcontractorBatchDetailPage() {
   React.useEffect(() => {
     loadBatchData()
   }, [loadBatchData])
+
+  // Horloge locale pour le chronomètre de la réparation en cours (se réinitialise après chaque validation)
+  React.useEffect(() => {
+    if (!batch || batch.status !== 'open' || isTimerPaused) return
+
+    const interval = setInterval(() => {
+      setStepSeconds((s) => s + 1)
+    }, 1000)
+
+    return () => clearInterval(interval)
+  }, [batch?.status, isTimerPaused, batch])
 
   // Initialiser les allocations quand les états sont chargés
   React.useEffect(() => {
@@ -344,6 +361,20 @@ export default function SubcontractorBatchDetailPage() {
 
       if (rpcError) throw rpcError
 
+      // Mettre à jour la durée enregistrée sur les nouvelles saisies avec la durée exacte de cette réparation
+      if (data && typeof data === 'object' && Array.isArray((data as { updates?: { id?: string }[] }).updates)) {
+        const updateIds = (data as { updates: { id: string }[] }).updates.map((u) => u.id).filter(Boolean)
+        if (updateIds.length > 0 && stepSeconds > 0) {
+          await supabase
+            .from('batch_updates')
+            .update({ duration_seconds: stepSeconds })
+            .in('id', updateIds)
+        }
+      }
+
+      // Réinitialiser le chronomètre de la réparation suivante à 0
+      setStepSeconds(0)
+
       let wonAmount = 0
       if (data && typeof data === 'object' && Array.isArray((data as { updates?: { amount?: number }[] }).updates)) {
         wonAmount = (data as { updates: { amount?: number }[] }).updates.reduce(
@@ -440,16 +471,16 @@ export default function SubcontractorBatchDetailPage() {
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
-                  {batchModels.length > 0
-                    ? batchModels.map((bm) => bm.model?.name).filter(Boolean).join(' + ')
-                    : batch.model?.name || 'Lot de pièces'}
+                  {getBatchDisplayName(batch)}
                 </h1>
                 <span className="font-mono text-xs font-semibold px-2 py-0.5 rounded bg-muted text-muted-foreground">
                   #{shortId}
                 </span>
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Créé le {format(new Date(batch.created_at), 'dd/MM/yyyy HH:mm', { locale: fr })}
+                Modèles : {batchModels.length > 0
+                  ? batchModels.map((bm) => bm.model?.name).filter(Boolean).join(' + ')
+                  : batch.model?.name || 'Standard'}
               </p>
             </div>
             <BatchStatusBadge status={batch.status} />
@@ -514,17 +545,27 @@ export default function SubcontractorBatchDetailPage() {
             </div>
           </div>
 
-          {/* Ligne 4 : Chronomètre si ouvert */}
+          {/* Ligne 4 : Chronomètre individuel de réparation avec bouton Pause */}
           {isOpen && (
-            <div className="flex items-center justify-between rounded-lg bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/40 p-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between rounded-lg bg-amber-50/80 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/40 p-3 gap-2">
               <div className="flex items-center gap-2">
                 <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-                <span className="text-xs font-semibold text-amber-900 dark:text-amber-200">
-                  Temps depuis ouverture
-                </span>
+                <div>
+                  <span className="text-xs font-semibold text-amber-900 dark:text-amber-200 block">
+                    Chronomètre de la réparation en cours
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">
+                    Se réinitialise à chaque validation pour mesurer le temps par pièce.
+                  </span>
+                </div>
               </div>
+
               <Stopwatch
-                startTime={batch.opened_at}
+                startTime={null}
+                elapsedSeconds={stepSeconds}
+                isPaused={isTimerPaused}
+                allowControls={true}
+                onTogglePause={() => setIsTimerPaused((p) => !p)}
                 className="text-amber-950 dark:text-amber-100 font-bold"
               />
             </div>
