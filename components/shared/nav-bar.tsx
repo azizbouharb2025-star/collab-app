@@ -111,6 +111,12 @@ export function NavBar({ role, userName }: NavBarProps) {
       active: pathname.startsWith('/admin/batches') || pathname.startsWith('/admin/batch-updates'),
     },
     {
+      title: 'Livraisons & Bons',
+      href: '/admin/deliveries',
+      icon: Truck,
+      active: pathname.startsWith('/admin/deliveries'),
+    },
+    {
       title: 'Récapitulatif',
       href: '/admin/recap',
       icon: BarChart3,
@@ -252,7 +258,7 @@ export function NavBar({ role, userName }: NavBarProps) {
                   recentDeliveries.map((d) => (
                     <DropdownMenuItem key={d.id} asChild>
                       <Link
-                        href={`/admin/batches/${d.batch_id}`}
+                        href="/admin/deliveries"
                         className="flex flex-col items-start gap-0.5 px-3 py-2 cursor-pointer"
                       >
                         <div className="flex items-center justify-between w-full text-xs font-semibold">
