@@ -641,3 +641,42 @@ GRANT EXECUTE ON FUNCTION public.record_batch_update TO authenticated;
 GRANT EXECUTE ON FUNCTION public.correct_batch_update TO authenticated;
 GRANT EXECUTE ON FUNCTION public.get_earnings_summary TO authenticated;
 GRANT USAGE ON SCHEMA public TO anon, authenticated;
+
+-- =============================================================================
+-- 17. Table batch_deliveries (Livraisons de pièces + Notifications Admin)
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS public.batch_deliveries (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  batch_id UUID NOT NULL REFERENCES public.batches(id) ON DELETE CASCADE,
+  delivered_by UUID NOT NULL REFERENCES public.profiles(id) DEFAULT auth.uid(),
+  quantity INTEGER NOT NULL CHECK (quantity > 0),
+  model_id UUID REFERENCES public.models(id),
+  delivered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  note TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_batch_deliveries_batch ON public.batch_deliveries(batch_id);
+CREATE INDEX IF NOT EXISTS idx_batch_deliveries_user ON public.batch_deliveries(delivered_by);
+
+ALTER TABLE public.batch_deliveries ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "deliveries_own" ON public.batch_deliveries;
+CREATE POLICY "deliveries_own" ON public.batch_deliveries
+  FOR SELECT USING (
+    delivered_by = auth.uid() OR public.is_admin()
+  );
+
+DROP POLICY IF EXISTS "deliveries_subcon_insert" ON public.batch_deliveries;
+CREATE POLICY "deliveries_subcon_insert" ON public.batch_deliveries
+  FOR INSERT WITH CHECK (
+    delivered_by = auth.uid()
+  );
+
+DROP POLICY IF EXISTS "deliveries_admin_all" ON public.batch_deliveries;
+CREATE POLICY "deliveries_admin_all" ON public.batch_deliveries
+  FOR ALL USING (public.is_admin());
+
+-- Activer Supabase Realtime sur batch_deliveries pour les notifications Admin
+ALTER PUBLICATION supabase_realtime ADD TABLE public.batch_deliveries;
+

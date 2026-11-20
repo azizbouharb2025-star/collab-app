@@ -126,3 +126,17 @@ export type EarningsByTransition = {
   total: number
   count: number
 }
+
+export type BatchDelivery = {
+  id: string
+  batch_id: string
+  delivered_by: string
+  quantity: number
+  model_id: string | null
+  delivered_at: string
+  note: string | null
+  created_at: string
+  delivered_by_profile?: Pick<Profile, 'id' | 'full_name' | 'email'> | null
+  model?: AppModel | null
+}
+

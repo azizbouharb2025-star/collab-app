@@ -3,6 +3,8 @@
 import * as React from 'react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
+import { format } from 'date-fns'
+import { fr } from 'date-fns/locale'
 import {
   Menu,
   X,
@@ -16,6 +18,8 @@ import {
   Users,
   Sliders,
   DollarSign,
+  Bell,
+  Truck,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -26,7 +30,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { createClient } from '@/lib/supabase/client'
-import { Role } from '@/lib/types'
+import { Role, BatchDelivery } from '@/lib/types'
+import { useToast } from '@/hooks/use-toast'
 import { cn } from '@/lib/utils'
 
 interface NavBarProps {
@@ -37,9 +42,52 @@ interface NavBarProps {
 export function NavBar({ role, userName }: NavBarProps) {
   const pathname = usePathname()
   const router = useRouter()
+  const { toast } = useToast()
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false)
   const [isLoggingOut, setIsLoggingOut] = React.useState(false)
-  const supabase = createClient()
+  const [recentDeliveries, setRecentDeliveries] = React.useState<BatchDelivery[]>([])
+  const [unreadCount, setUnreadCount] = React.useState(0)
+  const supabase = React.useMemo(() => createClient(), [])
+
+  // Charger les dernières livraisons et écouter en temps réel pour l'admin
+  React.useEffect(() => {
+    if (role !== 'admin') return
+
+    const fetchDeliveries = async () => {
+      const { data } = await supabase
+        .from('batch_deliveries')
+        .select('*, delivered_by_profile:profiles!delivered_by(id, full_name, email), model:models(*)')
+        .order('delivered_at', { ascending: false })
+        .limit(8)
+      if (data) {
+        setRecentDeliveries(data as BatchDelivery[])
+      }
+    }
+
+    fetchDeliveries()
+
+    const channel = supabase
+      .channel('admin-deliveries-notif')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'batch_deliveries' },
+        async (payload) => {
+          const newDeliv = payload.new as BatchDelivery
+          setUnreadCount((c) => c + 1)
+          await fetchDeliveries()
+          toast({
+            title: '🚚 Nouvelle livraison déclarée !',
+            description: `${newDeliv.quantity} pièce(s) viennent d'être livrées sur le lot #${newDeliv.batch_id.slice(0, 8).toUpperCase()}.`,
+          })
+          router.refresh()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [role, supabase, toast, router])
 
   const handleSignOut = async () => {
     try {
@@ -175,6 +223,58 @@ export function NavBar({ role, userName }: NavBarProps) {
 
         {/* Right side controls */}
         <div className="flex items-center gap-2">
+          {role === 'admin' && (
+            <DropdownMenu onOpenChange={(open) => { if (open) setUnreadCount(0) }}>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="relative" aria-label="Notifications de livraisons">
+                  <Bell className="h-5 w-5" />
+                  {unreadCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-orange-600 px-1 text-[10px] font-bold text-white">
+                      {unreadCount}
+                    </span>
+                  )}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-80">
+                <div className="px-3 py-2 text-xs font-semibold text-muted-foreground flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <Truck className="h-3.5 w-3.5 text-orange-600" />
+                    Dernières livraisons
+                  </span>
+                  <span>{recentDeliveries.length} récente(s)</span>
+                </div>
+                <DropdownMenuSeparator />
+                {recentDeliveries.length === 0 ? (
+                  <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+                    Aucune livraison récente
+                  </div>
+                ) : (
+                  recentDeliveries.map((d) => (
+                    <DropdownMenuItem key={d.id} asChild>
+                      <Link
+                        href={`/admin/batches/${d.batch_id}`}
+                        className="flex flex-col items-start gap-0.5 px-3 py-2 cursor-pointer"
+                      >
+                        <div className="flex items-center justify-between w-full text-xs font-semibold">
+                          <span className="text-orange-600 dark:text-orange-400">
+                            {d.quantity} pièce{d.quantity > 1 ? 's' : ''} livrée{d.quantity > 1 ? 's' : ''}
+                            {d.model?.name ? ` (${d.model.name})` : ''}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground font-normal">
+                            {format(new Date(d.delivered_at), 'dd/MM HH:mm', { locale: fr })}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-muted-foreground">
+                          Par {d.delivered_by_profile?.full_name || 'Sous-traitant'} — Lot #{d.batch_id.slice(0, 8).toUpperCase()}
+                        </span>
+                      </Link>
+                    </DropdownMenuItem>
+                  ))
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+
           {userName && (
             <span className="hidden lg:inline-block text-xs text-muted-foreground max-w-[150px] truncate">
               {userName}

@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation'
 import Link from 'next/link'
-import { ArrowLeft, ArrowRight, Clock, Calendar, AlertCircle, Wrench } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Clock, Calendar, AlertCircle, Wrench, Truck, User } from 'lucide-react'
 import { format } from 'date-fns'
 import { fr } from 'date-fns/locale'
 
@@ -21,7 +21,8 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { BatchActions } from './batch-actions'
-import { BatchWithRelations, BatchUpdateWithRelations, Profile } from '@/lib/types'
+import { DeliveryPrintSection } from './delivery-print-section'
+import { BatchWithRelations, BatchUpdateWithRelations, Profile, AppModel, BatchDelivery } from '@/lib/types'
 import { getBatchDisplayName } from '@/lib/utils'
 
 export const dynamic = 'force-dynamic'
@@ -81,6 +82,16 @@ export default async function BatchDetailPage({ params }: BatchDetailPageProps) 
     batch_models?: Array<{ id: string; quantity: number; model: AppModel }>
     batch_updates: (UpdateDetail & { model?: AppModel })[]
   }
+
+  // Charger les livraisons de ce lot
+  const { data: deliveriesData } = await supabase
+    .from('batch_deliveries')
+    .select('*, delivered_by_profile:profiles!delivered_by(id, full_name, email), model:models(*)')
+    .eq('batch_id', params.id)
+    .order('delivered_at', { ascending: false })
+
+  const deliveries = (deliveriesData || []) as BatchDelivery[]
+  const totalDelivered = deliveries.reduce((sum, d) => sum + (d.quantity || 0), 0)
 
   // Currency & date formatters
   const formatCurrency = (amount: number) =>
@@ -239,8 +250,8 @@ export default async function BatchDetailPage({ params }: BatchDetailPageProps) 
         </CardContent>
       </Card>
 
-      {/* Financial Summary */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {/* Financial & Delivery Summary */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card className="border-l-4 border-l-primary">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -251,6 +262,22 @@ export default async function BatchDetailPage({ params }: BatchDetailPageProps) 
             <div className="text-3xl font-bold">{totalProcessed}</div>
             <p className="text-xs text-muted-foreground mt-1">
               Sur {batch.quantity} pièces attendues
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card className="border-l-4 border-l-orange-500">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Total pièces livrées
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-3xl font-bold text-orange-600 dark:text-orange-400">
+              {totalDelivered}
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {deliveries.length} livraison{deliveries.length > 1 ? 's' : ''} déclarée{deliveries.length > 1 ? 's' : ''}
             </p>
           </CardContent>
         </Card>
@@ -271,6 +298,42 @@ export default async function BatchDetailPage({ params }: BatchDetailPageProps) 
           </CardContent>
         </Card>
       </div>
+
+      {/* Livraisons déclarées + Impression Bon de réception */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Truck className="h-5 w-5 text-orange-600" />
+                <span>Livraisons des pièces & Bon de réception</span>
+              </CardTitle>
+              <CardDescription>
+                Sélectionnez une date de livraison pour filtrer et imprimer le bon de réception correspondant
+              </CardDescription>
+            </div>
+            <Badge variant="outline" className="text-orange-700 border-orange-300 bg-orange-50 dark:bg-orange-950/30">
+              {totalDelivered} / {batch.quantity} livrées
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <DeliveryPrintSection
+            deliveries={deliveries}
+            batchId={batch.id}
+            batchName={getBatchDisplayName(batch)}
+            batchQuantity={batch.quantity}
+            subcontractorName={batch.subcontractor?.full_name || batch.subcontractor?.email || 'Sous-traitant'}
+            defaultModelName={
+              batch.batch_models && batch.batch_models.length > 0
+                ? batch.batch_models.map((bm) => bm.model?.name).filter(Boolean).join(' + ')
+                : batch.model?.name || 'Standard'
+            }
+            fromStateName={batch.from_state?.name || '—'}
+            expectedStateName={batch.expected_state?.name || '—'}
+          />
+        </CardContent>
+      </Card>
 
       {/* Timeline of Updates */}
       <Card>

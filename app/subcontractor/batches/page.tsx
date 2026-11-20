@@ -19,7 +19,6 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { BatchStatusBadge } from '@/components/shared/batch-status-badge'
 import { StateBadge } from '@/components/shared/state-badge'
-import { Stopwatch } from '@/components/shared/stopwatch'
 import { cn, getBatchDisplayName } from '@/lib/utils'
 
 export const dynamic = 'force-dynamic'
@@ -365,22 +364,6 @@ export default async function SubcontractorBatchesPage({ searchParams }: PagePro
                       </div>
                     </div>
                   </div>
-
-                  {/* Si statut = open : Chronomètre actif */}
-                  {isOpen && (
-                    <div className="flex items-center justify-between rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 p-3">
-                      <div className="flex items-center gap-2">
-                        <Clock className="h-4 w-4 text-amber-600 dark:text-amber-400 animate-spin-slow" />
-                        <span className="text-xs font-semibold text-amber-900 dark:text-amber-200">
-                          Chronomètre en cours
-                        </span>
-                      </div>
-                      <Stopwatch
-                        startTime={batch.opened_at}
-                        className="text-amber-950 dark:text-amber-100 font-bold"
-                      />
-                    </div>
-                  )}
 
                   {/* Note éventuelle */}
                   {batch.note && (
