@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/table'
 import { BatchActions } from './batch-actions'
 import { DeliveryPrintSection } from './delivery-print-section'
+import { UpdateRowActions } from './update-row-actions'
 import { BatchWithRelations, BatchUpdateWithRelations, Profile, AppModel, BatchDelivery } from '@/lib/types'
 import { getBatchDisplayName } from '@/lib/utils'
 
@@ -119,8 +120,14 @@ export default async function BatchDetailPage({ params }: BatchDetailPageProps) 
     (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
   )
 
-  // Active updates (non-superseded)
-  const activeUpdates = allUpdates.filter((u) => !u.original_update_id)
+  // Active updates (non-superseded): exclude rows whose id is referenced as original_update_id by a newer correction
+  const supersededIds = new Set<string>()
+  allUpdates.forEach((u) => {
+    if (u.original_update_id) {
+      supersededIds.add(u.original_update_id)
+    }
+  })
+  const activeUpdates = allUpdates.filter((u) => !supersededIds.has(u.id))
   const totalProcessed = activeUpdates.reduce((sum, u) => sum + u.quantity, 0)
   const totalAmount = activeUpdates.reduce((sum, u) => sum + Number(u.amount), 0)
   const progressPercent = Math.min(
@@ -367,14 +374,14 @@ export default async function BatchDetailPage({ params }: BatchDetailPageProps) 
                 </TableHeader>
                 <TableBody>
                   {sortedUpdates.map((update) => {
-                    const isCorrected = !!update.corrected_by
+                    const isSuperseded = supersededIds.has(update.id)
                     const isCorrection = !!update.original_update_id
 
                     return (
                       <TableRow
                         key={update.id}
                         className={
-                          isCorrected
+                          isSuperseded
                             ? 'opacity-60 bg-muted/30 line-through-text'
                             : ''
                         }
@@ -424,7 +431,7 @@ export default async function BatchDetailPage({ params }: BatchDetailPageProps) 
                               </Badge>
                             </div>
                           )}
-                          {isCorrected && (
+                          {isSuperseded && (
                             <div className="mb-1">
                               <Badge
                                 variant="secondary"
@@ -442,18 +449,15 @@ export default async function BatchDetailPage({ params }: BatchDetailPageProps) 
                         </TableCell>
 
                         <TableCell className="text-right">
-                          <Link
-                            href={`/admin/batch-updates/${update.id}/correct`}
-                          >
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-8 text-xs"
-                            >
-                              <Wrench className="h-3.5 w-3.5 mr-1" />
-                              Corriger
-                            </Button>
-                          </Link>
+                          <UpdateRowActions
+                            updateId={update.id}
+                            batchId={batch.id}
+                            currentQuantity={update.quantity}
+                            pricePerPiece={Number(update.price_per_piece)}
+                            modelName={update.model?.name || batch.model?.name || 'Modèle'}
+                            stateName={update.to_state?.name || 'État'}
+                            isSuperseded={isSuperseded}
+                          />
                         </TableCell>
                       </TableRow>
                     )

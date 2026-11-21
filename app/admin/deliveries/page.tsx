@@ -9,11 +9,12 @@ import {
   Truck,
   User,
   Calendar,
-  Filter,
   CheckSquare,
   Square,
   ExternalLink,
   RefreshCw,
+  Database,
+  Send,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { AppModel, Batch, BatchDelivery, Profile } from '@/lib/types'
@@ -21,7 +22,16 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import {
   Table,
   TableBody,
@@ -37,6 +47,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { useToast } from '@/hooks/use-toast'
 import { getBatchDisplayName } from '@/lib/utils'
 
 type DeliveryWithFullRelations = BatchDelivery & {
@@ -49,6 +60,7 @@ type DeliveryWithFullRelations = BatchDelivery & {
 
 export default function AdminDeliveriesPage() {
   const supabase = React.useMemo(() => createClient(), [])
+  const { toast } = useToast()
 
   const [deliveries, setDeliveries] = React.useState<DeliveryWithFullRelations[]>([])
   const [subcontractors, setSubcontractors] = React.useState<Profile[]>([])
@@ -60,6 +72,13 @@ export default function AdminDeliveriesPage() {
 
   // Sélection manuelle de lignes pour imprimer plusieurs livraisons de plusieurs lots sur un seul bon
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set())
+
+  // État pour l'envoi vers BEI Deluxe
+  const [beiDialogOpen, setBeiDialogOpen] = React.useState(false)
+  const [sendingBei, setSendingBei] = React.useState(false)
+  const [deluxeSocietes, setDeluxeSocietes] = React.useState<Array<{ code: string; nom: string }>>([])
+  const [selectedSocieteCode, setSelectedSocieteCode] = React.useState<string>('none')
+  const [depotId, setDepotId] = React.useState<number>(1)
 
   const loadData = React.useCallback(async () => {
     setLoading(true)
@@ -160,6 +179,89 @@ export default function AdminDeliveriesPage() {
   const distinctBatchesCount = React.useMemo(() => {
     return new Set(itemsToPrint.map((d) => d.batch_id)).size
   }, [itemsToPrint])
+
+  // Ouvrir la fenêtre d'envoi vers BEI Deluxe et charger les sociétés de societe.DBF
+  const handleOpenBeiDialog = async () => {
+    setBeiDialogOpen(true)
+    try {
+      const res = await fetch('/api/deluxe/articles')
+      const data = await res.json()
+      if (res.ok && Array.isArray(data.societes)) {
+        setDeluxeSocietes(data.societes)
+      }
+    } catch {
+      // Silencieux si non disponible
+    }
+  }
+
+  // Envoyer les livraisons sélectionnées vers BEI Deluxe (bei26.DBF + bei_op26.DBF + depot_article.DBF)
+  const handleSendToDeluxeBei = async () => {
+    if (itemsToPrint.length === 0) return
+    setSendingBei(true)
+    try {
+      // Regrouper les quantités par Référence article (modèle)
+      const groupedLines = new Map<string, { ref: string; nom: string; quantity: number }>()
+      itemsToPrint.forEach((d) => {
+        const refName =
+          d.model?.name ||
+          (d.batch?.batch_models && d.batch.batch_models.length > 0
+            ? d.batch.batch_models[0]?.model?.name
+            : d.batch?.model?.name) ||
+          'ARTICLE'
+        const desc = d.model?.description || refName
+        const key = refName.trim().toUpperCase()
+        const prev = groupedLines.get(key)
+        if (prev) {
+          prev.quantity += Number(d.quantity) || 0
+        } else {
+          groupedLines.set(key, {
+            ref: refName.trim(),
+            nom: desc,
+            quantity: Number(d.quantity) || 0,
+          })
+        }
+      })
+
+      const chosenSoc =
+        selectedSocieteCode !== 'none'
+          ? deluxeSocietes.find((s) => s.code === selectedSocieteCode)
+          : undefined
+
+      const res = await fetch('/api/deluxe/bei', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          depot: depotId,
+          societeCode: chosenSoc?.code || '',
+          societeNom: chosenSoc?.nom || '',
+          dateOp: selectedDate ? `${selectedDate}T12:00:00` : new Date().toISOString(),
+          lines: Array.from(groupedLines.values()),
+        }),
+      })
+
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.error || 'Erreur lors de la création du BEI dans Deluxe.')
+      }
+
+      toast({
+        title: `✅ BEI N° ${data.numeroBei} créé dans Deluxe !`,
+        description: `${data.linesCount} ligne(s) enregistrée(s) dans bei${data.yearSuffix}.DBF / bei_op${data.yearSuffix}.DBF (Total HT : ${Number(data.totalHt).toFixed(3)} TND).`,
+      })
+      setBeiDialogOpen(false)
+    } catch (err: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'Erreur BEI Deluxe',
+        description:
+          err instanceof Error
+            ? err.message
+            : "Impossible d'écrire dans C:\\Deluxe\\Gestcom\\TUNISIESANITAIRES2018",
+      })
+    } finally {
+      setSendingBei(false)
+    }
+  }
 
   // Impression d'un bon de réception multi-lots
   const handlePrintReceipt = (list: DeliveryWithFullRelations[]) => {
@@ -466,10 +568,18 @@ export default function AdminDeliveriesPage() {
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Button variant="outline" size="sm" onClick={loadData} disabled={loading}>
             <RefreshCw className={`h-4 w-4 mr-1.5 ${loading ? 'animate-spin' : ''}`} />
             Actualiser
+          </Button>
+          <Button
+            onClick={handleOpenBeiDialog}
+            disabled={itemsToPrint.length === 0}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-bold shadow"
+          >
+            <Database className="h-4 w-4 mr-2" />
+            Envoyer vers BEI Deluxe ({totalPiecesToPrint} pcs)
           </Button>
           <Button
             onClick={() => handlePrintReceipt(itemsToPrint)}
@@ -739,6 +849,94 @@ export default function AdminDeliveriesPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Fenêtre de confirmation et options pour l'envoi vers BEI Deluxe */}
+      <Dialog open={beiDialogOpen} onOpenChange={setBeiDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Database className="h-5 w-5 text-blue-600" />
+              <span>Envoyer vers BEI Deluxe Gestcom</span>
+            </DialogTitle>
+            <DialogDescription>
+              Crée automatiquement un nouveau BEI dans{' '}
+              <code className="text-xs bg-muted px-1 py-0.5 rounded">
+                C:\Deluxe\Gestcom\TUNISIESANITAIRES2018\bei26.DBF
+              </code>{' '}
+              et met à jour le stock du dépôt.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="rounded-lg bg-blue-50/70 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900 p-3 text-xs space-y-1">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Livraisons sélectionnées :</span>
+                <strong>{itemsToPrint.length} livraison(s) ({distinctBatchesCount} lot(s))</strong>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Total pièces à entrer en stock :</span>
+                <strong className="text-blue-700 dark:text-blue-300 text-sm">{totalPiecesToPrint} pièces</strong>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">
+                Société / Atelier dans Deluxe (optionnel)
+              </Label>
+              <Select value={selectedSocieteCode} onValueChange={setSelectedSocieteCode}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Sélectionner une société Deluxe (ou laisser vide)" />
+                </SelectTrigger>
+                <SelectContent className="max-h-60">
+                  <SelectItem value="none">— Aucun tiers (BEI interne standard) —</SelectItem>
+                  {deluxeSocietes.map((s) => (
+                    <SelectItem key={s.code} value={s.code}>
+                      {s.code} — {s.nom}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-semibold">Numéro de Dépôt Deluxe</Label>
+              <Input
+                type="number"
+                min={1}
+                value={depotId}
+                onChange={(e) => setDepotId(Math.max(1, parseInt(e.target.value, 10) || 1))}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setBeiDialogOpen(false)}
+              disabled={sendingBei}
+            >
+              Annuler
+            </Button>
+            <Button
+              onClick={handleSendToDeluxeBei}
+              disabled={sendingBei || itemsToPrint.length === 0}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-bold"
+            >
+              {sendingBei ? (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  Création du BEI...
+                </>
+              ) : (
+                <>
+                  <Send className="mr-2 h-4 w-4" />
+                  Confirmer & Créer le BEI Deluxe
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

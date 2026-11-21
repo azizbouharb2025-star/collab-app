@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { Plus, Edit2, CheckCircle2, XCircle, Power, Box } from 'lucide-react'
+import { Plus, Edit2, CheckCircle2, XCircle, Power, Box, Database, RefreshCw } from 'lucide-react'
 import { format } from 'date-fns'
 import { fr } from 'date-fns/locale'
 
@@ -53,6 +53,34 @@ export default function AdminConfigModelsPage() {
   const [formName, setFormName] = React.useState('')
   const [formDescription, setFormDescription] = React.useState('')
   const [submitting, setSubmitting] = React.useState(false)
+  const [importingDeluxe, setImportingDeluxe] = React.useState(false)
+
+  const handleImportDeluxeArticles = async () => {
+    setImportingDeluxe(true)
+    try {
+      const res = await fetch('/api/deluxe/articles', { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.error || "Impossible d'importer Article.DBF")
+      }
+      toast({
+        title: 'Importation Deluxe réussie !',
+        description: `${data.insertedCount} nouveaux articles importés (${data.totalInDbf} lus dans Article.DBF).`,
+      })
+      await loadModels()
+    } catch (err: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'Erreur importation Deluxe',
+        description:
+          err instanceof Error
+            ? err.message
+            : "Vérifiez que l'application tourne en local sur le PC ayant accès à C:\\Deluxe\\Gestcom\\TUNISIESANITAIRES2018",
+      })
+    } finally {
+      setImportingDeluxe(false)
+    }
+  }
 
   const loadModels = React.useCallback(async () => {
     try {
@@ -213,10 +241,26 @@ export default function AdminConfigModelsPage() {
           </p>
         </div>
 
-        <Button onClick={handleOpenCreate}>
-          <Plus className="mr-2 h-4 w-4" />
-          Ajouter un modèle
-        </Button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            variant="outline"
+            onClick={handleImportDeluxeArticles}
+            disabled={importingDeluxe}
+            className="border-blue-300 text-blue-700 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-300"
+          >
+            {importingDeluxe ? (
+              <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Database className="mr-2 h-4 w-4" />
+            )}
+            {importingDeluxe ? 'Importation Article.DBF...' : 'Importer depuis Article.DBF (Deluxe)'}
+          </Button>
+
+          <Button onClick={handleOpenCreate}>
+            <Plus className="mr-2 h-4 w-4" />
+            Ajouter un modèle
+          </Button>
+        </div>
       </div>
 
       {error && (
